@@ -1,37 +1,18 @@
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "Method not allowed",
-    });
-  }
-
+export async function POST(req: Request) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      console.error("GEMINI_API_KEY is missing");
-
-      return res.status(500).json({
-        error: "Gemini API key is not configured.",
-      });
+      return Response.json(
+        { error: "GEMINI_API_KEY is not configured." },
+        { status: 500 }
+      );
     }
 
-    // Read request body safely
-    let body = req.body;
-
-    if (typeof body === "string") {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        body = {};
-      }
-    }
-
-    body = body || {};
+    const body = await req.json();
 
     console.log("CHAT BODY:", JSON.stringify(body));
 
-    // Get the user's message from several common formats
     let message = "";
 
     if (typeof body.message === "string") {
@@ -50,74 +31,53 @@ export default async function handler(req, res) {
       message = body.input;
     }
 
-    // Handle messages array
+    if (!message && typeof body.content === "string") {
+      message = body.content;
+    }
+
     if (!message && Array.isArray(body.messages)) {
       const last = body.messages[body.messages.length - 1];
 
       if (typeof last === "string") {
         message = last;
-      }
-
-      if (last && typeof last.content === "string") {
+      } else if (last && typeof last.content === "string") {
         message = last.content;
-      }
-
-      if (last && typeof last.text === "string") {
+      } else if (last && typeof last.text === "string") {
         message = last.text;
       }
-
-      if (
-        last &&
-        Array.isArray(last.parts)
-      ) {
-        message = last.parts
-          .map((part) => {
-            if (typeof part === "string") return part;
-            return part?.text || "";
-          })
-          .join(" ");
-      }
     }
 
-    // Handle content directly
-    if (!message && typeof body.content === "string") {
-      message = body.content;
-    }
-
-    message = String(message || "").trim();
+    message = message.trim();
 
     console.log("CHAT MESSAGE:", message);
 
     if (!message) {
-      return res.status(400).json({
-        error: "No message was received.",
-      });
+      return Response.json(
+        { error: "No message was received." },
+        { status: 400 }
+      );
     }
 
-    // Call Gemini
-    const geminiResponse = await fetch(
+    const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
       {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey,
         },
-
         body: JSON.stringify({
           systemInstruction: {
             parts: [
               {
                 text:
                   "You are the SK Designer portfolio website AI assistant. " +
-                  "Help website visitors learn about SK Designer's services, " +
-                  "portfolio, graphic design work, projects, and how to contact SK. " +
+                  "Help visitors with SK Designer's services, portfolio, " +
+                  "graphic design projects, design work, and contacting SK. " +
                   "Be friendly, professional, concise and helpful.",
               },
             ],
           },
-
           contents: [
             {
               role: "user",
@@ -128,7 +88,6 @@ export default async function handler(req, res) {
               ],
             },
           ],
-
           generationConfig: {
             maxOutputTokens: 500,
           },
@@ -136,62 +95,53 @@ export default async function handler(req, res) {
       }
     );
 
-    const data = await geminiResponse.json();
+    const data = await response.json();
 
-    console.log(
-      "GEMINI STATUS:",
-      geminiResponse.status
-    );
+    console.log("GEMINI STATUS:", response.status);
 
-    if (!geminiResponse.ok) {
-      console.error(
-        "GEMINI ERROR:",
-        JSON.stringify(data)
+    if (!response.ok) {
+      console.error("GEMINI ERROR:", JSON.stringify(data));
+
+      return Response.json(
+        {
+          error:
+            data?.error?.message ||
+            "Gemini API request failed.",
+        },
+        { status: 500 }
       );
-
-      return res.status(500).json({
-        error:
-          data?.error?.message ||
-          "Gemini API request failed.",
-      });
     }
 
     const reply =
       data?.candidates?.[0]?.content?.parts
-        ?.map((part) => part?.text || "")
+        ?.map((part: any) => part?.text || "")
         .join("")
         .trim();
 
     if (!reply) {
-      console.error(
-        "EMPTY GEMINI RESPONSE:",
-        JSON.stringify(data)
+      return Response.json(
+        { error: "Gemini returned an empty response." },
+        { status: 500 }
       );
-
-      return res.status(500).json({
-        error: "Gemini returned an empty response.",
-      });
     }
 
-    // Return several compatible fields
-    // so your existing frontend can use whichever it expects.
-    return res.status(200).json({
+    return Response.json({
       reply,
       message: reply,
       response: reply,
       text: reply,
     });
 
-  } catch (error) {
-    console.error(
-      "CHAT SERVER ERROR:",
-      error
-    );
+  } catch (error: any) {
+    console.error("CHAT ERROR:", error);
 
-    return res.status(500).json({
-      error:
-        error?.message ||
-        "Unable to contact the AI service.",
-    });
+    return Response.json(
+      {
+        error:
+          error?.message ||
+          "Unable to contact the AI service.",
+      },
+      { status: 500 }
+    );
   }
 }
