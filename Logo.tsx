@@ -1,2 +1,0 @@
-import Image from "next/image";
-export function Logo({compact=false}:{compact?:boolean}){return <div className={`flex items-center gap-3 ${compact?"scale-90":""}`}><Image src="/logo.png" alt="SK I AM A DESIGNER" width={54} height={54} className="h-11 w-11 rounded-full object-contain"/><div className="leading-none"><div className="text-[11px] font-semibold tracking-[.28em] text-cyan-300">SK</div><div className="text-xs font-bold tracking-[.14em] text-white/80">I AM A DESIGNER</div></div></div>}
