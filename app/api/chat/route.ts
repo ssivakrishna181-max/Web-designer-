@@ -1,66 +1,127 @@
-import OpenAI from "openai";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(req: Request) {
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+export async function POST(request: NextRequest) {
   try {
-    const { message } = await req.json();
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    if (!message || typeof message !== "string") {
+    if (!apiKey) {
+      console.error("GEMINI_API_KEY is missing");
       return NextResponse.json(
-        { reply: "Please enter a message." },
-        { status: 400 }
-      );
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      console.error("OPENAI_API_KEY is missing.");
-      return NextResponse.json(
-        { reply: "AI service is not configured yet." },
+        { error: "Gemini API key is not configured." },
         { status: 500 }
       );
     }
 
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    const body = await request.json();
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
 
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
-      instructions: `
-You are the SK Designer portfolio AI assistant.
+    if (messages.length === 0) {
+      return NextResponse.json(
+        { error: "No messages were provided." },
+        { status: 400 }
+      );
+    }
 
-You represent SK Designer, a professional graphic designer.
+    const contents = messages
+      .filter((message: any) => message?.role !== "system")
+      .map((message: any) => {
+        const role = message?.role === "assistant" ? "model" : "user";
 
-Help visitors with:
-- Graphic design services
-- Logo design
-- Poster and flyer design
-- Social media design
-- Branding
-- Portfolio projects
-- Starting a design project
-- General questions about SK Designer
+        let text = "";
 
-Be friendly, professional, concise, and helpful.
-If a visitor wants to start a project, encourage them to use the contact option on the portfolio.
+        if (typeof message?.content === "string") {
+          text = message.content;
+        } else if (Array.isArray(message?.content)) {
+          text = message.content
+            .map((item: any) => {
+              if (typeof item === "string") return item;
+              return item?.text || "";
+            })
+            .join("\n");
+        }
 
-Do not invent personal information, clients, prices, awards, or projects that are not provided.
-      `,
-      input: message,
-    });
+        return {
+          role,
+          parts: [{ text }],
+        };
+      })
+      .filter((message: any) => message.parts[0].text.trim());
+
+    const systemMessage = messages.find(
+      (message: any) => message?.role === "system"
+    );
+
+    const requestBody: any = {
+      contents,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 500,
+      },
+    };
+
+    if (systemMessage) {
+      const systemText =
+        typeof systemMessage.content === "string"
+          ? systemMessage.content
+          : "";
+
+      if (systemText.trim()) {
+        requestBody.systemInstruction = {
+          parts: [{ text: systemText }],
+        };
+      }
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Gemini API error:", data);
+
+      return NextResponse.json(
+        {
+          error: "Gemini API request failed.",
+          details: data?.error?.message || "Unknown Gemini API error",
+        },
+        { status: response.status }
+      );
+    }
+
+    const reply =
+      data?.candidates?.[0]?.content?.parts
+        ?.map((part: any) => part?.text || "")
+        .join("") || "";
+
+    if (!reply) {
+      return NextResponse.json(
+        { error: "Gemini returned an empty response." },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
-      reply:
-        response.output_text ||
-        "I'm sorry, I couldn't generate a response right now.",
+      message: reply,
+      reply,
     });
   } catch (error) {
-    console.error("OpenAI chat error:", error);
+    console.error("Chat API error:", error);
 
     return NextResponse.json(
       {
-        reply:
-          "I'm temporarily unavailable. Please try again in a moment.",
+        error: "Something went wrong while processing the chat request.",
       },
       { status: 500 }
     );
