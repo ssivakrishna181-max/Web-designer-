@@ -1,129 +1,127 @@
-import { NextRequest, NextResponse } from "next/server";
+export default async function handler(req, res) {
+  // Only allow POST requests
+  if (req.method !== "POST") {
+    return res.status(405).json({
+      error: "Method not allowed",
+    });
+  }
 
-const GEMINI_MODEL = "gemini-2.5-flash";
-
-export async function POST(request: NextRequest) {
   try {
+    // Get Gemini API key from Vercel Environment Variables
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       console.error("GEMINI_API_KEY is missing");
-      return NextResponse.json(
-        { error: "Gemini API key is not configured." },
-        { status: 500 }
-      );
+      return res.status(500).json({
+        error: "Gemini API key is not configured",
+      });
     }
 
-    const body = await request.json();
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    // Read the request body
+    const body = req.body || {};
 
-    if (messages.length === 0) {
-      return NextResponse.json(
-        { error: "No messages were provided." },
-        { status: 400 }
-      );
-    }
+    // Accept common message formats
+    let message = "";
 
-    const contents = messages
-      .filter((message: any) => message?.role !== "system")
-      .map((message: any) => {
-        const role = message?.role === "assistant" ? "model" : "user";
+    if (typeof body.message === "string") {
+      message = body.message;
+    } else if (typeof body.prompt === "string") {
+      message = body.prompt;
+    } else if (Array.isArray(body.messages)) {
+      const lastMessage = body.messages[body.messages.length - 1];
 
-        let text = "";
-
-        if (typeof message?.content === "string") {
-          text = message.content;
-        } else if (Array.isArray(message?.content)) {
-          text = message.content
-            .map((item: any) => {
-              if (typeof item === "string") return item;
-              return item?.text || "";
-            })
-            .join("\n");
-        }
-
-        return {
-          role,
-          parts: [{ text }],
-        };
-      })
-      .filter((message: any) => message.parts[0].text.trim());
-
-    const systemMessage = messages.find(
-      (message: any) => message?.role === "system"
-    );
-
-    const requestBody: any = {
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 500,
-      },
-    };
-
-    if (systemMessage) {
-      const systemText =
-        typeof systemMessage.content === "string"
-          ? systemMessage.content
-          : "";
-
-      if (systemText.trim()) {
-        requestBody.systemInstruction = {
-          parts: [{ text: systemText }],
-        };
+      if (typeof lastMessage === "string") {
+        message = lastMessage;
+      } else if (lastMessage && typeof lastMessage.content === "string") {
+        message = lastMessage.content;
       }
     }
 
+    message = message.trim();
+
+    if (!message) {
+      return res.status(400).json({
+        error: "Please enter a message.",
+      });
+    }
+
+    // Call Gemini
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey,
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text:
+                  "You are the SK portfolio website AI assistant. " +
+                  "Help visitors with SK Designer's services, portfolio, " +
+                  "projects, design work, and contacting SK. " +
+                  "Be friendly, professional, concise, and helpful.",
+              },
+            ],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: message,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 500,
+          },
+        }),
       }
     );
 
     const data = await response.json();
 
+    // Gemini returned an error
     if (!response.ok) {
       console.error("Gemini API error:", data);
 
-      return NextResponse.json(
-        {
-          error: "Gemini API request failed.",
-          details: data?.error?.message || "Unknown Gemini API error",
-        },
-        { status: response.status }
-      );
+      return res.status(response.status).json({
+        error:
+          data?.error?.message ||
+          "Gemini API request failed.",
+      });
     }
 
+    // Extract Gemini response
     const reply =
       data?.candidates?.[0]?.content?.parts
-        ?.map((part: any) => part?.text || "")
-        .join("") || "";
+        ?.map((part) => part.text || "")
+        .join("")
+        .trim();
 
     if (!reply) {
-      return NextResponse.json(
-        { error: "Gemini returned an empty response." },
-        { status: 500 }
-      );
+      console.error("No Gemini response:", data);
+
+      return res.status(500).json({
+        error: "Gemini returned an empty response.",
+      });
     }
 
-    return NextResponse.json({
+    // Send response back to website
+    return res.status(200).json({
+      reply: reply,
       message: reply,
-      reply,
     });
   } catch (error) {
     console.error("Chat API error:", error);
 
-    return NextResponse.json(
-      {
-        error: "Something went wrong while processing the chat request.",
-      },
-      { status: 500 }
-    );
+    return res.status(500).json({
+      error: "Unable to contact the AI service.",
+    });
   }
 }
