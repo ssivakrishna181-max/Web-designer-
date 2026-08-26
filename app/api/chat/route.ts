@@ -4,21 +4,65 @@ import { NextResponse } from "next/server";
 export async function POST(req: Request) {
   try {
     const { message } = await req.json();
-    if (!message) return NextResponse.json({ reply: "Please enter a message." }, { status: 400 });
 
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ reply: "AI is not configured yet. Please add OPENAI_API_KEY to the deployment environment." });
+    if (!message || typeof message !== "string") {
+      return NextResponse.json(
+        { reply: "Please enter a message." },
+        { status: 400 }
+      );
     }
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5-mini",
-      instructions: `You are the AI assistant for SK — I AM A DESIGNER, a professional creative portfolio. Skills: Graphic Design, Artificial Intelligence, Video Editing, Content Creation, Affiliate Marketing. Be concise, professional, helpful, and guide visitors toward relevant work or starting a project. Do not invent clients, prices, awards, projects, or credentials.`,
-      input: message
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OPENAI_API_KEY is missing.");
+      return NextResponse.json(
+        { reply: "AI service is not configured yet." },
+        { status: 500 }
+      );
+    }
+
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
     });
 
-    return NextResponse.json({ reply: response.output_text });
-  } catch {
-    return NextResponse.json({ reply: "I’m temporarily unavailable. Please use the contact option instead." }, { status: 500 });
+    const response = await client.responses.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+      instructions: `
+You are the SK Designer portfolio AI assistant.
+
+You represent SK Designer, a professional graphic designer.
+
+Help visitors with:
+- Graphic design services
+- Logo design
+- Poster and flyer design
+- Social media design
+- Branding
+- Portfolio projects
+- Starting a design project
+- General questions about SK Designer
+
+Be friendly, professional, concise, and helpful.
+If a visitor wants to start a project, encourage them to use the contact option on the portfolio.
+
+Do not invent personal information, clients, prices, awards, or projects that are not provided.
+      `,
+      input: message,
+    });
+
+    return NextResponse.json({
+      reply:
+        response.output_text ||
+        "I'm sorry, I couldn't generate a response right now.",
+    });
+  } catch (error) {
+    console.error("OpenAI chat error:", error);
+
+    return NextResponse.json(
+      {
+        reply:
+          "I'm temporarily unavailable. Please try again in a moment.",
+      },
+      { status: 500 }
+    );
   }
 }
