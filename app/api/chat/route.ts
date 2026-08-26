@@ -1,4 +1,5 @@
-const MODEL = "gemini-3.7-flash";
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   try {
@@ -8,9 +9,7 @@ export async function POST(req: Request) {
       console.error("GEMINI_API_KEY is missing");
 
       return Response.json(
-        {
-          error: "AI is not configured on the server.",
-        },
+        { error: "Gemini API key is not configured." },
         { status: 500 }
       );
     }
@@ -19,37 +18,55 @@ export async function POST(req: Request) {
 
     let message = "";
 
+    // Format 1
     if (typeof body?.message === "string") {
       message = body.message;
-    } else if (typeof body?.prompt === "string") {
-      message = body.prompt;
-    } else if (typeof body?.text === "string") {
-      message = body.text;
-    } else if (Array.isArray(body?.messages)) {
-      const last = body.messages[body.messages.length - 1];
+    }
 
-      if (typeof last === "string") {
-        message = last;
-      } else if (typeof last?.content === "string") {
-        message = last.content;
-      } else if (typeof last?.text === "string") {
-        message = last.text;
+    // Format 2
+    else if (typeof body?.prompt === "string") {
+      message = body.prompt;
+    }
+
+    // Format 3 - AI SDK / modern chat format
+    else if (Array.isArray(body?.messages)) {
+      const lastMessage = body.messages[body.messages.length - 1];
+
+      if (typeof lastMessage === "string") {
+        message = lastMessage;
+      }
+
+      else if (typeof lastMessage?.content === "string") {
+        message = lastMessage.content;
+      }
+
+      else if (Array.isArray(lastMessage?.parts)) {
+        message = lastMessage.parts
+          .filter(
+            (part: any) =>
+              part &&
+              (part.type === "text" || typeof part.text === "string")
+          )
+          .map((part: any) => part.text || "")
+          .join("\n");
       }
     }
 
     message = message.trim();
 
     if (!message) {
+      console.error("Could not extract message from request:", body);
+
       return Response.json(
-        {
-          error: "Please enter a message.",
-        },
+        { error: "Please enter a message." },
         { status: 400 }
       );
     }
 
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    console.log("Sending message to Gemini:", message);
+
+    const response = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
       {
         method: "POST",
         headers: {
@@ -64,10 +81,10 @@ export async function POST(req: Request) {
 You are the SK Designer portfolio website assistant.
 
 Your job is to help website visitors with:
-- SK Designer's services
+- SK Designer services
 - Graphic design
-- Branding
 - Logo design
+- Branding
 - Posters
 - Flyers
 - Social media designs
@@ -75,9 +92,10 @@ Your job is to help website visitors with:
 - Starting a project
 - Contacting SK
 
-Be professional, friendly and concise.
+Be friendly, professional, concise and helpful.
 
-If a visitor asks how to contact SK and the website does not provide a confirmed contact method, say that they can use the website's contact section rather than inventing contact information.
+If someone wants to contact SK, explain that they should use the contact section/form on the website.
+Do not invent phone numbers, email addresses, prices, projects or services that are not provided.
                 `.trim(),
               },
             ],
@@ -102,15 +120,10 @@ If a visitor asks how to contact SK and the website does not provide a confirmed
       }
     );
 
-    const data = await geminiResponse.json();
+    const data = await response.json();
 
-    console.log("Gemini status:", geminiResponse.status);
-
-    if (!geminiResponse.ok) {
-      console.error(
-        "Gemini API error:",
-        JSON.stringify(data)
-      );
+    if (!response.ok) {
+      console.error("Gemini API error:", data);
 
       return Response.json(
         {
@@ -118,35 +131,30 @@ If a visitor asks how to contact SK and the website does not provide a confirmed
             data?.error?.message ||
             "Gemini API request failed.",
         },
-        { status: 500 }
+        { status: response.status }
       );
     }
 
     const reply = data?.candidates?.[0]?.content?.parts
-      ?.map((part: { text?: string }) => part.text || "")
+      ?.map((part: any) => part?.text || "")
       .join("")
       .trim();
 
     if (!reply) {
-      console.error(
-        "Gemini returned no text:",
-        JSON.stringify(data)
-      );
+      console.error("Gemini returned no text:", data);
 
       return Response.json(
-        {
-          error: "The AI returned an empty response.",
-        },
+        { error: "Gemini returned an empty response." },
         { status: 500 }
       );
     }
 
     return Response.json({
       reply,
+      message: reply,
     });
-
   } catch (error) {
-    console.error("CHAT ROUTE ERROR:", error);
+    console.error("CHAT API ERROR:", error);
 
     return Response.json(
       {
